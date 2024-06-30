@@ -1,0 +1,76 @@
+#!/bin/bash
+
+LOGFILE="/var/log/update_script.log"
+exec > >(tee -a $LOGFILE) 2>&1
+
+# Update package lists
+echo "Updating package lists..."
+if ! sudo apt update; then
+    echo "Failed to update package lists."
+    exit 1
+fi
+
+# Upgrade installed packages
+echo "Upgrading installed packages..."
+if ! sudo apt full-upgrade -y; then
+    echo "Failed to upgrade packages."
+    exit 1
+fi
+
+# Configure any partially set up packages
+echo "Configuring partially set up packages..."
+if ! sudo dpkg --configure -a -f; then
+    echo "Failed to configure partially set up packages."
+    exit 1
+fi
+
+# Fix broken dependencies
+echo "Fixing broken dependencies..."
+if ! sudo apt install -f; then
+    echo "Failed to fix broken dependencies."
+    exit 1
+fi
+
+# Remove unnecessary packages
+echo "Removing unnecessary packages..."
+if ! sudo apt autoremove --purge -y; then
+    echo "Failed to remove unnecessary packages."
+    exit 1
+fi
+
+# Update the Recovery partition
+echo "Updating the Recovery partition..."
+if ! sudo pop-upgrade recovery upgrade from-release; then
+    echo "Failed to update the Recovery partition."
+    exit 1
+fi
+
+# Check if a new Pop!_OS release is available
+echo "Checking for a new Pop!_OS release..."
+PROMPT_UPGRADE=$(sudo pop-upgrade release upgrade --check)
+if echo "$PROMPT_UPGRADE" | grep -q "NEW_RELEASE_AVAILABLE"; then
+    read -p "A new Pop!_OS release is available. Do you want to upgrade now? (y/n) " answer
+    if [[ "$answer" =~ ^[Yy]$ ]]; then
+        echo "Upgrading to the new Pop!_OS release..."
+        if ! sudo pop-upgrade release upgrade; then
+            echo "Failed to upgrade to the new Pop!_OS release."
+            exit 1
+        fi
+    fi
+else
+    echo "No new Pop!_OS release is available."
+fi
+
+# Check if a system reboot is required
+if [ -f /var/run/reboot-required ]; then
+    echo "A system reboot is required to complete the updates."
+    read -p "Do you want to reboot now? (y/n) " answer
+    if [[ "$answer" =~ ^[Yy]$ ]]; then
+        if ! sudo reboot; then
+            echo "Failed to reboot the system."
+            exit 1
+        fi
+    fi
+else
+    echo "No system reboot is required."
+fi
