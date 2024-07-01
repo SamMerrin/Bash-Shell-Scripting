@@ -1,64 +1,69 @@
 #!/bin/bash
 
 LOGFILE="/var/log/update_script.log"
-exec > >(tee -a $LOGFILE) 2>&1
+exec > >(sudo tee -a $LOGFILE) 2>&1
+
+log_and_exit() {
+    echo "$1"
+    exit 1
+}
+
+# Remove invalid System76 repository if it exists
+if [ -f /etc/apt/sources.list.d/system76-ubuntu-pop-lunar.list ]; then
+    echo "Removing invalid System76 repository..."
+    sudo rm /etc/apt/sources.list.d/system76-ubuntu-pop-lunar.list
+fi
 
 # Update package lists
 echo "Updating package lists..."
 if ! sudo apt update; then
-    echo "Failed to update package lists."
-    exit 1
+    log_and_exit "Failed to update package lists."
 fi
 
 # Upgrade installed packages
 echo "Upgrading installed packages..."
 if ! sudo apt full-upgrade -y; then
-    echo "Failed to upgrade packages."
-    exit 1
+    log_and_exit "Failed to upgrade packages."
 fi
 
 # Configure any partially set up packages
 echo "Configuring partially set up packages..."
-if ! sudo dpkg --configure -a -f; then
-    echo "Failed to configure partially set up packages."
-    exit 1
+if ! sudo dpkg --configure -a; then
+    log_and_exit "Failed to configure partially set up packages."
 fi
 
 # Fix broken dependencies
 echo "Fixing broken dependencies..."
 if ! sudo apt install -f; then
-    echo "Failed to fix broken dependencies."
-    exit 1
+    log_and_exit "Failed to fix broken dependencies."
 fi
 
 # Remove unnecessary packages
 echo "Removing unnecessary packages..."
 if ! sudo apt autoremove --purge -y; then
-    echo "Failed to remove unnecessary packages."
-    exit 1
+    log_and_exit "Failed to remove unnecessary packages."
 fi
 
-# Update the Recovery partition
-echo "Updating the Recovery partition..."
-if ! sudo pop-upgrade recovery upgrade from-release; then
-    echo "Failed to update the Recovery partition."
-    exit 1
-fi
-
-# Check if a new Pop!_OS release is available
-echo "Checking for a new Pop!_OS release..."
-PROMPT_UPGRADE=$(sudo pop-upgrade release upgrade --check)
-if echo "$PROMPT_UPGRADE" | grep -q "NEW_RELEASE_AVAILABLE"; then
-    read -p "A new Pop!_OS release is available. Do you want to upgrade now? (y/n) " answer
-    if [[ "$answer" =~ ^[Yy]$ ]]; then
-        echo "Upgrading to the new Pop!_OS release..."
-        if ! sudo pop-upgrade release upgrade; then
-            echo "Failed to upgrade to the new Pop!_OS release."
-            exit 1
+# Check if a new release is available (Debian/Ubuntu)
+if command -v lsb_release &> /dev/null; then
+    DISTRO=$(lsb_release -is)
+    RELEASE=$(lsb_release -cs)
+    if [[ "$DISTRO" == "Debian" || "$DISTRO" == "Ubuntu" ]]; then
+        echo "Checking for a new $DISTRO release..."
+        if sudo do-release-upgrade -c | grep -q "New release"; then
+            read -p "A new $DISTRO release is available. Do you want to upgrade now? (y/n) " answer
+            if [[ "$answer" =~ ^[Yy]$ ]]; then
+                echo "Upgrading to the new $DISTRO release..."
+                if ! sudo do-release-upgrade; then
+                    log_and_exit "Failed to upgrade to the new $DISTRO release."
+                fi
+            fi
+        else
+            echo "No new $DISTRO release is available."
         fi
     fi
 else
-    echo "No new Pop!_OS release is available."
+    echo "lsb_release command not found. Skipping release check."
 fi
 
 # Check if a system reboot is required
@@ -67,8 +72,7 @@ if [ -f /var/run/reboot-required ]; then
     read -p "Do you want to reboot now? (y/n) " answer
     if [[ "$answer" =~ ^[Yy]$ ]]; then
         if ! sudo reboot; then
-            echo "Failed to reboot the system."
-            exit 1
+            log_and_exit "Failed to reboot the system."
         fi
     fi
 else
